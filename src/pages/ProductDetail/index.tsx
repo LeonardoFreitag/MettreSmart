@@ -217,7 +217,18 @@ const ProductDetail: React.FC = () => {
 
           <Footer>
             <Button onClick={() => handleBack()}>Voltar</Button>
-            <Button type="submit">Avançar</Button>
+            {provider.open !== 'S' ? (
+              <Button
+                type="button"
+                colorButton="#999"
+                disabled
+                title="Estabelecimento fechado no momento"
+              >
+                Fechado
+              </Button>
+            ) : (
+              <Button type="submit">Avançar</Button>
+            )}
           </Footer>
         </Container>
       </Form>

@@ -59,8 +59,6 @@ const Login: React.FC = () => {
   }, [dispatch, history, provider.id]);
 
   const handleLogin = useCallback(() => {
-    if (provider.open !== 'S') return;
-
     localStorage.removeItem('gselected');
     localStorage.removeItem('request');
     localStorage.removeItem('flavorSelected');
@@ -95,7 +93,7 @@ const Login: React.FC = () => {
     localStorage.setItem('request', JSON.stringify(newRequest));
 
     history.push('/groups');
-  }, [customer, dispatch, history, provider.id, provider.open]);
+  }, [customer, dispatch, history, provider.id]);
 
   return (
     <Container className="login-container">
@@ -114,19 +112,17 @@ const Login: React.FC = () => {
       </Map> */}
       <Footer>
         {provider.open === 'S' ? (
-          <>
-            <DetailText style={{ color: 'green', fontWeight: 'bold' }}>
-              Cardápio disponível
-            </DetailText>
-            <Button className="button" type="button" onClick={handleLogin}>
-              Vamos ao cardápio
-            </Button>
-          </>
+          <DetailText style={{ color: 'green', fontWeight: 'bold' }}>
+            Cardápio disponível
+          </DetailText>
         ) : (
           <DetailText style={{ color: 'red', fontWeight: 'bold' }}>
-            Estabelecimento fechado no momento
+            Estabelecimento fechado — somente visualização
           </DetailText>
         )}
+        <Button className="button" type="button" onClick={handleLogin}>
+          {provider.open === 'S' ? 'Vamos ao cardápio' : 'Ver cardápio'}
+        </Button>
       </Footer>
     </Container>
   );

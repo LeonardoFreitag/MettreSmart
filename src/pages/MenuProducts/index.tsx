@@ -18,11 +18,7 @@ import { ItemModel } from '../../models/ItemModel';
 import { createItemSelected } from '../../store/ducks/itemSelected/actions';
 import { createCallLoadStorage } from '../../store/ducks/callLoadStorage/actions';
 
-import { useToast } from '../../hooks/toast';
-
 const MenuProducts: React.FC = () => {
-  const { addToast } = useToast();
-
   const dispatch = useDispatch();
 
   const provider = useSelector((state: RootState) => state.provider.data);
@@ -103,40 +99,24 @@ const MenuProducts: React.FC = () => {
 
   const handleProductDetail = useCallback(
     (data: ProductModel) => {
-      if (provider.open === 'S') {
-        const newItemSel: ItemModel = {
-          id: data.id,
-          idRequest: request.id,
-          code: data.code,
-          description: data.description,
-          unity: data.unity,
-          price: data.price,
-          amount: 1,
-          combined: groupSelected.fractioned,
-          comments: '',
-          flavors: [],
-          total: 0,
-        };
-        dispatch(createItemSelected(newItemSel));
-        localStorage.setItem('iselected', JSON.stringify(newItemSel));
-        history.push('/productDetail');
-      } else {
-        addToast({
-          type: 'info',
-          title: 'Atenção',
-          description:
-            'Prezado cliente, estabelecimento não está aberto, tente novamente mais tarde.',
-        });
-      }
+      const newItemSel: ItemModel = {
+        id: data.id,
+        idRequest: request.id,
+        code: data.code,
+        description: data.description,
+        unity: data.unity,
+        price: data.price,
+        amount: 1,
+        combined: groupSelected.fractioned,
+        comments: '',
+        flavors: [],
+        total: 0,
+      };
+      dispatch(createItemSelected(newItemSel));
+      localStorage.setItem('iselected', JSON.stringify(newItemSel));
+      history.push('/productDetail');
     },
-    [
-      addToast,
-      dispatch,
-      groupSelected.fractioned,
-      history,
-      provider.open,
-      request.id,
-    ],
+    [dispatch, groupSelected.fractioned, history, request.id],
   );
 
   const handleBack = useCallback(() => {
