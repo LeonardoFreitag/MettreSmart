@@ -56,7 +56,6 @@ import {
   BackButton,
   CartIconButton,
   CartBadge,
-  NeighSelect,
   Spinner,
   SpinnerBlue,
   CustomerCard,
@@ -66,6 +65,17 @@ import {
   CustomerCardRow,
   CustomerCardLabel,
   CustomerCardValue,
+  NeighButton,
+  ModalOverlay,
+  ModalBox,
+  ModalTitle,
+  ModalSearch,
+  NeighList,
+  NeighCard,
+  NeighCardInfo,
+  NeighCardName,
+  NeighCardMeta,
+  NeighCardFee,
 } from './styles';
 
 type Step = 'phone' | 'address' | 'payment';
@@ -118,7 +128,8 @@ const Checkout: React.FC = () => {
   const [bairro, setBairro] = useState('');
   const [isCepLoading, setIsCepLoading] = useState(false);
   const [neighSelected, setNeighSelected] = useState<NeighModel | null>(null);
-  const [showNeighSelect, setShowNeighSelect] = useState(false);
+  const [showNeighModal, setShowNeighModal] = useState(false);
+  const [neighSearch, setNeighSearch] = useState('');
 
   // Passo 3 — Pagamento
   const [paymentSelected, setPaymentSelected] = useState('');
@@ -301,13 +312,7 @@ const Checkout: React.FC = () => {
       setUf(data.uf || '');
 
       const matched = matchNeighborhood(data.bairro, neighList);
-      if (matched) {
-        setNeighSelected(matched);
-        setShowNeighSelect(false);
-      } else {
-        setNeighSelected(null);
-        setShowNeighSelect(true);
-      }
+      setNeighSelected(matched || null);
     },
     [addToast, neighList],
   );
@@ -538,10 +543,14 @@ const Checkout: React.FC = () => {
       history.push('/success');
     } catch (error) {
       console.error('Erro ao enviar o pedido:', error);
+      const firebaseError = error as { code?: string; message?: string };
+      const code = firebaseError.code ?? 'desconhecido';
+      const detail = firebaseError.message ?? String(error);
       addToast({
         type: 'error',
-        title: 'Erro ao enviar',
-        description: 'Não foi possível enviar o pedido. Tente novamente.',
+        title: `Erro ao enviar [${code}]`,
+        description: detail,
+        duration: 10000,
       });
     } finally {
       setIsSending(false);
@@ -687,42 +696,21 @@ const Checkout: React.FC = () => {
 
           <FieldGroup>
             <Label>Bairro de entrega</Label>
-            {showNeighSelect ? (
-              <NeighSelect
-                value={neighSelected?.id || ''}
-                onChange={e => {
-                  const found =
-                    neighList.find(n => n.id === e.target.value) || null;
-                  setNeighSelected(found);
-                  if (found) setBairro(found.name);
-                }}
-              >
-                <option value="">Selecione seu bairro</option>
-                {neighList.map(n => (
-                  <option key={n.id} value={n.id}>
-                    {n.name}
-                    {' — '}
-                    {n.city}
-                    {' - '}
-                    {n.uf}
-                  </option>
-                ))}
-              </NeighSelect>
-            ) : (
-              <StyledInput
-                value={
-                  neighSelected
-                    ? `${neighSelected.name} — ${neighSelected.city}/${neighSelected.uf}`
-                    : bairro || ''
-                }
-                readOnly
-                placeholder="Será preenchido pelo CEP"
-              />
-            )}
+            <NeighButton
+              type="button"
+              data-placeholder={!neighSelected ? 'true' : 'false'}
+              onClick={() => { setNeighSearch(''); setShowNeighModal(true); }}
+            >
+              <span>
+                {neighSelected
+                  ? `${neighSelected.name} — ${neighSelected.city}/${neighSelected.uf}`
+                  : 'Selecione seu bairro'}
+              </span>
+              <FiEdit2 size={16} />
+            </NeighButton>
             {neighSelected && (
               <InfoText>
-                Taxa de entrega:
-                {formatBRL(Number(neighSelected.feeDelivery))}
+                Taxa de entrega: {formatBRL(Number(neighSelected.feeDelivery))}
               </InfoText>
             )}
           </FieldGroup>
@@ -891,6 +879,42 @@ const Checkout: React.FC = () => {
             </Button>
           </Footer>
         </>
+      )}
+      {showNeighModal && (
+        <ModalOverlay onClick={() => setShowNeighModal(false)}>
+          <ModalBox onClick={e => e.stopPropagation()}>
+            <ModalTitle>Selecione seu bairro</ModalTitle>
+            <ModalSearch
+              autoFocus
+              placeholder="Buscar bairro..."
+              value={neighSearch}
+              onChange={e => setNeighSearch(e.target.value)}
+            />
+            <NeighList>
+              {neighList
+                .filter(n =>
+                  n.name.toLowerCase().includes(neighSearch.toLowerCase()) ||
+                  n.city.toLowerCase().includes(neighSearch.toLowerCase()),
+                )
+                .map(n => (
+                  <NeighCard
+                    key={n.id}
+                    onClick={() => {
+                      setNeighSelected(n);
+                      setBairro(n.name);
+                      setShowNeighModal(false);
+                    }}
+                  >
+                    <NeighCardInfo>
+                      <NeighCardName>{n.name}</NeighCardName>
+                      <NeighCardMeta>{n.city} — {n.uf}</NeighCardMeta>
+                    </NeighCardInfo>
+                    <NeighCardFee>{formatBRL(Number(n.feeDelivery))}</NeighCardFee>
+                  </NeighCard>
+                ))}
+            </NeighList>
+          </ModalBox>
+        </ModalOverlay>
       )}
     </Container>
   );

@@ -348,6 +348,128 @@ export const NeighSelect = styled.select`
   cursor: pointer;
 `;
 
+export const NeighButton = styled.button`
+  ${inputBase}
+  height: 48px;
+  cursor: pointer;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #fff;
+  color: #333;
+  gap: 8px;
+
+  &[data-placeholder='true'] {
+    color: #aaa;
+  }
+
+  svg {
+    flex-shrink: 0;
+    color: #888;
+  }
+`;
+
+export const ModalOverlay = styled.div`
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  z-index: 1000;
+  padding: 0;
+`;
+
+export const ModalBox = styled.div`
+  background: #fff;
+  border-radius: 18px 18px 0 0;
+  width: 100%;
+  max-width: 500px;
+  height: 75vh;
+  min-height: 75vh;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 20px 16px 8px;
+  box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.15);
+`;
+
+export const ModalTitle = styled.p`
+  font-size: 15px;
+  font-weight: 600;
+  font-family: 'Roboto Regular';
+  color: #333;
+  margin: 0 0 12px;
+  text-align: center;
+`;
+
+export const ModalSearch = styled.input`
+  ${inputBase}
+  height: 44px;
+  margin-bottom: 12px;
+  flex-shrink: 0;
+`;
+
+export const NeighList = styled.ul`
+  flex: 1;
+  min-height: 75vh;
+  overflow-y: auto;
+  list-style: none;
+  margin: 0;
+  padding: 0 0 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+`;
+
+export const NeighCard = styled.li`
+  border: 1.5px solid #e0e0e0;
+  border-radius: 10px;
+  padding: 12px 14px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  &:active {
+    background: #f5f5f5;
+  }
+
+  &:hover {
+    border-color: #28a745;
+    background: #f0faf3;
+  }
+`;
+
+export const NeighCardName = styled.span`
+  font-size: 14px;
+  font-family: 'Roboto Regular';
+  color: #333;
+  font-weight: 500;
+`;
+
+export const NeighCardMeta = styled.span`
+  font-size: 12px;
+  font-family: 'Roboto Regular';
+  color: #888;
+  margin-top: 2px;
+`;
+
+export const NeighCardInfo = styled.div`
+  display: flex;
+  flex-direction: column;
+`;
+
+export const NeighCardFee = styled.span`
+  font-size: 13px;
+  font-family: 'Roboto Regular';
+  color: #28a745;
+  font-weight: 600;
+  white-space: nowrap;
+`;
+
 const spin = keyframes`
   to { transform: rotate(360deg); }
 `;
