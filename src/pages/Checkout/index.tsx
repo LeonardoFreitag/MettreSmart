@@ -76,9 +76,64 @@ import {
   NeighCardName,
   NeighCardMeta,
   NeighCardFee,
+  FeeStatusBox,
+  FeeRetryButton,
 } from './styles';
 
 type Step = 'phone' | 'address' | 'payment';
+type DeliveryFeeStatus =
+  | 'idle'
+  | 'loading'
+  | 'success'
+  | 'out_of_area'
+  | 'error'
+  | 'config_error';
+
+interface DeliveryZone {
+  distMin: number;
+  distMax: number;
+  fee: number;
+}
+
+interface DeliveryConfig {
+  originLat: number;
+  originLng: number;
+  zones: DeliveryZone[];
+}
+
+function haversineKm(
+  lat1: number,
+  lng1: number,
+  lat2: number,
+  lng2: number,
+): number {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function calcularTaxa(
+  config: DeliveryConfig,
+  clienteLat: number,
+  clienteLng: number,
+): { fee: number; distanceKm: number } | null {
+  const dist = haversineKm(
+    config.originLat,
+    config.originLng,
+    clienteLat,
+    clienteLng,
+  );
+  const zona = config.zones.find(
+    z => dist >= z.distMin && dist < z.distMax,
+  );
+  return zona ? { fee: zona.fee, distanceKm: dist } : null;
+}
 
 const formatBRL = (value: number) =>
   Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(
@@ -140,6 +195,23 @@ const Checkout: React.FC = () => {
   const [isSending, setIsSending] = useState(false);
   const [isSavingAddress, setIsSavingAddress] = useState(false);
 
+  // Configuração de entrega (zonas + origem) lida do Firestore
+  const [deliveryConfig, setDeliveryConfig] = useState<DeliveryConfig | null>(
+    null,
+  );
+
+  // Taxa de entrega calculada no front-end
+  const [deliveryFeeStatus, setDeliveryFeeStatus] =
+    useState<DeliveryFeeStatus>('idle');
+  const [deliveryFeeFromAPI, setDeliveryFeeFromAPI] = useState<number | null>(
+    null,
+  );
+  const [deliveryDistanceKm, setDeliveryDistanceKm] = useState<number | null>(
+    null,
+  );
+  const [deliveryLat, setDeliveryLat] = useState(0);
+  const [deliveryLng, setDeliveryLng] = useState(0);
+
   // Guard: redireciona para loadStorage se provider não estiver carregado
   useEffect(() => {
     if (!provider.id) {
@@ -147,6 +219,24 @@ const Checkout: React.FC = () => {
       history.push('/loadstorage');
     }
   }, [dispatch, history, provider.id]);
+
+  // Carrega configuração de zonas de entrega do Firestore
+  useEffect(() => {
+    if (!provider.id) return;
+    firebase
+      .firestore()
+      .collection('deliveryConfig')
+      .doc(provider.id)
+      .get()
+      .then(doc => {
+        if (doc.exists) {
+          setDeliveryConfig(doc.data() as DeliveryConfig);
+        } else {
+          setDeliveryFeeStatus('config_error');
+        }
+      })
+      .catch(() => setDeliveryFeeStatus('config_error'));
+  }, [provider.id]);
 
   // Detecta cliente recorrente lendo localStorage uma única vez ao montar
   useEffect(() => {
@@ -416,6 +506,72 @@ const Checkout: React.FC = () => {
     uf,
   ]);
 
+  const fetchDeliveryFee = useCallback(async () => {
+    if (!deliveryConfig) {
+      setDeliveryFeeStatus('config_error');
+      return;
+    }
+
+    const cityName =
+      city || neighSelected?.city || 'Cuiabá';
+    const ufName = uf || neighSelected?.uf || 'MT';
+    const addressQuery = [street, addressNumber, `${cityName}, ${ufName}`]
+      .filter(Boolean)
+      .join(', ');
+
+    if (!addressQuery.trim()) {
+      setDeliveryFeeStatus('error');
+      return;
+    }
+
+    setDeliveryFeeStatus('loading');
+
+    try {
+      // 1. Geocoding via Nominatim (OpenStreetMap)
+      const geoResp = await fetch(
+        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(
+          addressQuery,
+        )}&format=json&limit=1`,
+        { headers: { 'Accept-Language': 'pt-BR,pt;q=0.9' } },
+      );
+
+      if (!geoResp.ok) throw new Error('geocode_failed');
+
+      const geoData = await geoResp.json();
+      if (!Array.isArray(geoData) || geoData.length === 0)
+        throw new Error('geocode_no_result');
+
+      const lat = parseFloat(geoData[0].lat);
+      const lng = parseFloat(geoData[0].lon);
+      setDeliveryLat(lat);
+      setDeliveryLng(lng);
+
+      // 2. Cálculo da taxa no front-end com haversine + zonas do Firestore
+      const resultado = calcularTaxa(deliveryConfig, lat, lng);
+
+      if (!resultado) {
+        setDeliveryFeeStatus('out_of_area');
+        return;
+      }
+
+      setDeliveryFeeFromAPI(resultado.fee);
+      setDeliveryDistanceKm(resultado.distanceKm);
+      setDeliveryFeeStatus('success');
+    } catch {
+      setDeliveryFeeStatus('error');
+    }
+  }, [addressNumber, city, deliveryConfig, neighSelected, street, uf]);
+
+  // Dispara cálculo da taxa ao entrar no passo de pagamento (entrega).
+  // Aguarda deliveryConfig carregar antes de chamar a função — evita
+  // condição de corrida em clientes recorrentes que chegam direto no step 'payment'.
+  useEffect(() => {
+    if (step !== 'payment' || comeGet) return;
+    if (!deliveryConfig) return;
+    if (deliveryFeeStatus !== 'idle' && deliveryFeeStatus !== 'config_error') return;
+    fetchDeliveryFee();
+  }, [step, comeGet, deliveryFeeStatus, deliveryConfig, fetchDeliveryFee]);
+
   const handleSelectPayment = useCallback((payment: PaymentModel) => {
     setPaymentSelected(payment.formPayment);
     setHasChange(payment.change === 'S');
@@ -424,9 +580,17 @@ const Checkout: React.FC = () => {
 
   const feeDelivery = useMemo(() => {
     if (comeGet) return 0;
+    if (deliveryFeeStatus === 'success' && deliveryFeeFromAPI !== null)
+      return deliveryFeeFromAPI;
     if (neighSelected) return Number(neighSelected.feeDelivery);
     return Number(customer.feeDelivery || 0);
-  }, [comeGet, customer.feeDelivery, neighSelected]);
+  }, [
+    comeGet,
+    customer.feeDelivery,
+    deliveryFeeFromAPI,
+    deliveryFeeStatus,
+    neighSelected,
+  ]);
 
   const totalRequest = useMemo(
     () => Number(request.totalProducts) + feeDelivery,
@@ -447,6 +611,14 @@ const Checkout: React.FC = () => {
         type: 'error',
         title: 'Bairro não selecionado',
         description: 'Não foi possível determinar o bairro de entrega.',
+      });
+      return;
+    }
+    if (!comeGet && deliveryFeeStatus === 'out_of_area') {
+      addToast({
+        type: 'error',
+        title: 'Fora da área',
+        description: 'Este endereço está fora da nossa área de entrega.',
       });
       return;
     }
@@ -472,8 +644,8 @@ const Checkout: React.FC = () => {
       city: city || neighSelected?.city || '',
       uf: uf || neighSelected?.uf || '',
       comments: customer.comments || '',
-      latitude: 0,
-      longitude: 0,
+      latitude: deliveryLat,
+      longitude: deliveryLng,
       read: customer.read || false,
     };
 
@@ -524,8 +696,8 @@ const Checkout: React.FC = () => {
         dataCustomer: newCustomer,
         comeGet,
         comments: orderComments,
-        latitude: 0,
-        longitude: 0,
+        latitude: deliveryLat,
+        longitude: deliveryLng,
         change,
       };
 
@@ -565,6 +737,9 @@ const Checkout: React.FC = () => {
     comeGet,
     complement,
     customer,
+    deliveryFeeStatus,
+    deliveryLat,
+    deliveryLng,
     dispatch,
     feeDelivery,
     history,
@@ -741,7 +916,12 @@ const Checkout: React.FC = () => {
                 <CustomerCardTitle>Seus dados cadastrais</CustomerCardTitle>
                 <CustomerCardEditButton
                   type="button"
-                  onClick={() => setStep('address')}
+                  onClick={() => {
+                    setDeliveryFeeStatus('idle');
+                    setDeliveryFeeFromAPI(null);
+                    setDeliveryDistanceKm(null);
+                    setStep('address');
+                  }}
                 >
                   <FiEdit2 size={11} />
                   Alterar dados
@@ -835,6 +1015,42 @@ const Checkout: React.FC = () => {
             />
           </FieldGroup>
 
+          {!comeGet && (
+            <>
+              {deliveryFeeStatus === 'loading' && (
+                <FeeStatusBox variant="loading">
+                  <SpinnerBlue style={{ flexShrink: 0 }} />
+                  Calculando taxa de entrega...
+                </FeeStatusBox>
+              )}
+              {deliveryFeeStatus === 'success' && (
+                <FeeStatusBox variant="success">
+                  Taxa de entrega: {formatBRL(feeDelivery)}
+                  {deliveryDistanceKm !== null &&
+                    ` (${deliveryDistanceKm.toFixed(1)} km)`}
+                </FeeStatusBox>
+              )}
+              {deliveryFeeStatus === 'out_of_area' && (
+                <FeeStatusBox variant="error">
+                  Endereço fora da nossa área de entrega.
+                </FeeStatusBox>
+              )}
+              {deliveryFeeStatus === 'error' && (
+                <FeeStatusBox variant="error">
+                  Não foi possível calcular a taxa.
+                  <FeeRetryButton type="button" onClick={fetchDeliveryFee}>
+                    Tente novamente.
+                  </FeeRetryButton>
+                </FeeStatusBox>
+              )}
+              {deliveryFeeStatus === 'config_error' && (
+                <FeeStatusBox variant="error">
+                  Não foi possível carregar as configurações de entrega.
+                </FeeStatusBox>
+              )}
+            </>
+          )}
+
           <TotalArea>
             <SwitchArea>
               <Switch
@@ -852,27 +1068,44 @@ const Checkout: React.FC = () => {
               <LabelTotal>Retirada no balcão</LabelTotal>
             ) : (
               <LabelTotal>
-                Entrega:
-                {formatBRL(feeDelivery)}
+                Entrega:{' '}
+                {deliveryFeeStatus === 'success'
+                  ? formatBRL(feeDelivery)
+                  : '---'}
               </LabelTotal>
             )}
             <LabelTotal>
               Total:
-              {formatBRL(totalRequest)}
+              {comeGet || deliveryFeeStatus === 'success'
+                ? formatBRL(totalRequest)
+                : '---'}
             </LabelTotal>
           </TotalArea>
 
           <Footer>
             <BackButton
-              onClick={() => setStep(isReturning ? 'phone' : 'address')}
+              onClick={() => {
+                setDeliveryFeeStatus('idle');
+                setDeliveryFeeFromAPI(null);
+                setDeliveryDistanceKm(null);
+                setStep(isReturning ? 'phone' : 'address');
+              }}
             >
               <FiArrowLeft />
               Voltar
             </BackButton>
             <Button
-              colorButton={isSending ? '#999' : 'green'}
+              colorButton={
+                isSending ||
+                (!comeGet && deliveryFeeStatus !== 'success')
+                  ? '#999'
+                  : 'green'
+              }
               onClick={handleSubmit}
-              disabled={isSending}
+              disabled={
+                isSending ||
+                (!comeGet && deliveryFeeStatus !== 'success')
+              }
             >
               {isSending ? 'Enviando' : 'Enviar pedido'}
               {isSending && <Spinner />}

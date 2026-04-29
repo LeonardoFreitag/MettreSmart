@@ -571,3 +571,52 @@ export const CustomerCardValue = styled.span`
   color: #333;
   word-break: break-word;
 `;
+
+export const FeeStatusBox = styled.div<{
+  variant: 'loading' | 'success' | 'error';
+}>`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-family: 'Roboto Regular';
+  margin-bottom: 8px;
+
+  ${({ variant }) =>
+    variant === 'loading' &&
+    css`
+      background: #f0f7ff;
+      color: #2b70a8;
+      border: 1px solid #bfe0f8;
+    `}
+
+  ${({ variant }) =>
+    variant === 'success' &&
+    css`
+      background: #eaf6ee;
+      color: #2d6a4f;
+      border: 1px solid #c3e6cb;
+    `}
+
+  ${({ variant }) =>
+    variant === 'error' &&
+    css`
+      background: #fdf0f2;
+      color: #c62828;
+      border: 1px solid #f5c2c7;
+    `}
+`;
+
+export const FeeRetryButton = styled.button`
+  background: none;
+  border: none;
+  color: #c62828;
+  font-size: 13px;
+  font-family: 'Roboto Regular';
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+`;
