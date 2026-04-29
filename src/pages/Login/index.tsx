@@ -117,7 +117,7 @@ const Login: React.FC = () => {
           </DetailText>
         ) : (
           <DetailText style={{ color: 'red', fontWeight: 'bold' }}>
-            Estabelecimento fechado — somente visualização
+            Somente visualização
           </DetailText>
         )}
         <Button className="button" type="button" onClick={handleLogin}>

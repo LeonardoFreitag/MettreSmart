@@ -222,7 +222,7 @@ const ProductDetail: React.FC = () => {
                 type="button"
                 colorButton="#999"
                 disabled
-                title="Estabelecimento fechado no momento"
+                title="Somente visualização"
               >
                 Fechado
               </Button>
