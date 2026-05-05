@@ -15,6 +15,7 @@ import {
   FiCheck,
   FiEdit2,
   FiArrowLeft,
+  FiMapPin,
 } from 'react-icons/fi';
 import { FaShoppingCart } from 'react-icons/fa';
 
@@ -194,6 +195,9 @@ const Checkout: React.FC = () => {
   const [orderComments, setOrderComments] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [isSavingAddress, setIsSavingAddress] = useState(false);
+  const [geoStatus, setGeoStatus] = useState<
+    'idle' | 'requesting' | 'granted' | 'denied'
+  >('idle');
 
   // Configuração de entrega (zonas + origem) lida do Firestore
   const [deliveryConfig, setDeliveryConfig] = useState<DeliveryConfig | null>(
@@ -260,7 +264,9 @@ const Checkout: React.FC = () => {
         setBairro(c.neigh || '');
         setCity(c.city || '');
         setUf(c.uf || '');
-        setStep('payment');
+        const hasCompleteAddress =
+          c.address?.trim() && c.number?.trim() && c.neigh?.trim();
+        setStep(hasCompleteAddress ? 'payment' : 'address');
       }
     } catch {
       // localStorage corrompido — ignora e começa do zero
@@ -354,7 +360,20 @@ const Checkout: React.FC = () => {
         );
       }
       setIsReturning(true);
-      setStep('payment');
+
+      const hasCompleteAddress =
+        c.address?.trim() && c.number?.trim() && c.neigh?.trim();
+      if (hasCompleteAddress) {
+        setStep('payment');
+      } else {
+        addToast({
+          type: 'info',
+          title: 'Complete seu endereço',
+          description:
+            'Encontramos seu cadastro! Por favor, informe os dados de entrega para continuar.',
+        });
+        setStep('address');
+      }
     } else {
       const ref = firebase.firestore().collection('customers').doc();
       dispatch(
@@ -506,61 +525,121 @@ const Checkout: React.FC = () => {
     uf,
   ]);
 
-  const fetchDeliveryFee = useCallback(async () => {
-    if (!deliveryConfig) {
-      setDeliveryFeeStatus('config_error');
-      return;
-    }
-
-    const cityName =
-      city || neighSelected?.city || 'Cuiabá';
-    const ufName = uf || neighSelected?.uf || 'MT';
-    const addressQuery = [street, addressNumber, `${cityName}, ${ufName}`]
-      .filter(Boolean)
-      .join(', ');
-
-    if (!addressQuery.trim()) {
-      setDeliveryFeeStatus('error');
-      return;
-    }
-
-    setDeliveryFeeStatus('loading');
-
-    try {
-      // 1. Geocoding via Nominatim (OpenStreetMap)
-      const geoResp = await fetch(
-        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(
-          addressQuery,
-        )}&format=json&limit=1`,
-        { headers: { 'Accept-Language': 'pt-BR,pt;q=0.9' } },
-      );
-
-      if (!geoResp.ok) throw new Error('geocode_failed');
-
-      const geoData = await geoResp.json();
-      if (!Array.isArray(geoData) || geoData.length === 0)
-        throw new Error('geocode_no_result');
-
-      const lat = parseFloat(geoData[0].lat);
-      const lng = parseFloat(geoData[0].lon);
-      setDeliveryLat(lat);
-      setDeliveryLng(lng);
-
-      // 2. Cálculo da taxa no front-end com haversine + zonas do Firestore
-      const resultado = calcularTaxa(deliveryConfig, lat, lng);
-
-      if (!resultado) {
-        setDeliveryFeeStatus('out_of_area');
+  const fetchDeliveryFee = useCallback(
+    async (fromCoords?: { lat: number; lng: number }) => {
+      if (!deliveryConfig) {
+        setDeliveryFeeStatus('config_error');
         return;
       }
 
-      setDeliveryFeeFromAPI(resultado.fee);
-      setDeliveryDistanceKm(resultado.distanceKm);
-      setDeliveryFeeStatus('success');
-    } catch {
-      setDeliveryFeeStatus('error');
+      setDeliveryFeeStatus('loading');
+
+      try {
+        let coords = fromCoords ?? null;
+
+        if (!coords) {
+          // Geocoding via Nominatim quando não há coordenadas GPS
+          const cityName = city || neighSelected?.city || 'Cuiabá';
+          const ufName = uf || neighSelected?.uf || 'MT';
+          const neighName = neighSelected?.name || bairro;
+
+          const fullQuery = [
+            street,
+            addressNumber,
+            neighName,
+            `${cityName}, ${ufName}`,
+          ]
+            .filter(Boolean)
+            .join(', ');
+          const neighQuery = [neighName, `${cityName}, ${ufName}`]
+            .filter(Boolean)
+            .join(', ');
+
+          if (!fullQuery.trim()) {
+            setDeliveryFeeStatus('error');
+            return;
+          }
+
+          const tryGeocode = async (
+            query: string,
+          ): Promise<{ lat: number; lng: number } | null> => {
+            try {
+              const resp = await fetch(
+                `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(
+                  query,
+                )}&format=json&limit=1`,
+                { headers: { 'Accept-Language': 'pt-BR,pt;q=0.9' } },
+              );
+              if (!resp.ok) return null;
+              const data = await resp.json();
+              if (!Array.isArray(data) || data.length === 0) return null;
+              return {
+                lat: parseFloat(data[0].lat),
+                lng: parseFloat(data[0].lon),
+              };
+            } catch {
+              return null;
+            }
+          };
+
+          // Tenta endereço completo (com bairro); se falhar, tenta só bairro+cidade
+          coords = (await tryGeocode(fullQuery)) ?? null;
+          if (!coords && neighQuery !== fullQuery) {
+            coords = (await tryGeocode(neighQuery)) ?? null;
+          }
+        }
+
+        if (!coords) throw new Error('geocode_no_result');
+
+        setDeliveryLat(coords.lat);
+        setDeliveryLng(coords.lng);
+
+        const resultado = calcularTaxa(deliveryConfig, coords.lat, coords.lng);
+        if (!resultado) {
+          setDeliveryFeeStatus('out_of_area');
+          return;
+        }
+
+        setDeliveryFeeFromAPI(resultado.fee);
+        setDeliveryDistanceKm(resultado.distanceKm);
+        setDeliveryFeeStatus('success');
+      } catch {
+        setDeliveryFeeStatus('error');
+      }
+    },
+    [addressNumber, bairro, city, deliveryConfig, neighSelected, street, uf],
+  );
+
+  const requestGeolocation = useCallback(() => {
+    if (!navigator.geolocation) {
+      addToast({
+        type: 'info',
+        title: 'GPS indisponível',
+        description: 'Seu navegador não suporta geolocalização.',
+      });
+      return;
     }
-  }, [addressNumber, city, deliveryConfig, neighSelected, street, uf]);
+    setGeoStatus('requesting');
+    navigator.geolocation.getCurrentPosition(
+      pos => {
+        setGeoStatus('granted');
+        fetchDeliveryFee({
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+        });
+      },
+      () => {
+        setGeoStatus('denied');
+        addToast({
+          type: 'error',
+          title: 'Localização negada',
+          description:
+            'Permita o acesso à localização ou aguarde o cálculo pelo endereço.',
+        });
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 },
+    );
+  }, [addToast, fetchDeliveryFee]);
 
   // Dispara cálculo da taxa ao entrar no passo de pagamento (entrega).
   // Aguarda deliveryConfig carregar antes de chamar a função — evita
@@ -596,6 +675,10 @@ const Checkout: React.FC = () => {
     () => Number(request.totalProducts) + feeDelivery,
     [feeDelivery, request.totalProducts],
   );
+
+  // Permite envio usando a taxa do bairro quando o geocoding falha
+  const canUseNeighFallback = deliveryFeeStatus === 'error' && !!neighSelected;
+  const feeResolved = comeGet || deliveryFeeStatus === 'success' || canUseNeighFallback;
 
   const handleSubmit = useCallback(async () => {
     if (!paymentSelected) {
@@ -1015,6 +1098,26 @@ const Checkout: React.FC = () => {
             />
           </FieldGroup>
 
+          {!comeGet && geoStatus !== 'granted' && deliveryFeeStatus !== 'success' && (
+            <FeeStatusBox variant="loading">
+              <FiMapPin size={15} style={{ flexShrink: 0 }} />
+              {geoStatus === 'requesting'
+                ? 'Buscando sua localização...'
+                : 'Usar minha localização para calcular a entrega'}
+              {geoStatus !== 'requesting' && (
+                <FeeRetryButton
+                  type="button"
+                  onClick={requestGeolocation}
+                >
+                  Permitir
+                </FeeRetryButton>
+              )}
+              {geoStatus === 'requesting' && (
+                <SpinnerBlue style={{ flexShrink: 0 }} />
+              )}
+            </FeeStatusBox>
+          )}
+
           {!comeGet && (
             <>
               {deliveryFeeStatus === 'loading' && (
@@ -1035,11 +1138,19 @@ const Checkout: React.FC = () => {
                   Endereço fora da nossa área de entrega.
                 </FeeStatusBox>
               )}
-              {deliveryFeeStatus === 'error' && (
+              {deliveryFeeStatus === 'error' && !canUseNeighFallback && (
                 <FeeStatusBox variant="error">
                   Não foi possível calcular a taxa.
-                  <FeeRetryButton type="button" onClick={fetchDeliveryFee}>
+                  <FeeRetryButton type="button" onClick={() => fetchDeliveryFee()}>
                     Tente novamente.
+                  </FeeRetryButton>
+                </FeeStatusBox>
+              )}
+              {canUseNeighFallback && (
+                <FeeStatusBox variant="loading">
+                  Taxa estimada pelo bairro: {formatBRL(feeDelivery)}
+                  <FeeRetryButton type="button" onClick={() => fetchDeliveryFee()}>
+                    Recalcular por endereço.
                   </FeeRetryButton>
                 </FeeStatusBox>
               )}
@@ -1069,16 +1180,12 @@ const Checkout: React.FC = () => {
             ) : (
               <LabelTotal>
                 Entrega:{' '}
-                {deliveryFeeStatus === 'success'
-                  ? formatBRL(feeDelivery)
-                  : '---'}
+                {feeResolved ? formatBRL(feeDelivery) : '---'}
               </LabelTotal>
             )}
             <LabelTotal>
               Total:
-              {comeGet || deliveryFeeStatus === 'success'
-                ? formatBRL(totalRequest)
-                : '---'}
+              {feeResolved ? formatBRL(totalRequest) : '---'}
             </LabelTotal>
           </TotalArea>
 
@@ -1088,6 +1195,7 @@ const Checkout: React.FC = () => {
                 setDeliveryFeeStatus('idle');
                 setDeliveryFeeFromAPI(null);
                 setDeliveryDistanceKm(null);
+                setGeoStatus('idle');
                 setStep(isReturning ? 'phone' : 'address');
               }}
             >
@@ -1096,16 +1204,10 @@ const Checkout: React.FC = () => {
             </BackButton>
             <Button
               colorButton={
-                isSending ||
-                (!comeGet && deliveryFeeStatus !== 'success')
-                  ? '#999'
-                  : 'green'
+                isSending || (!comeGet && !feeResolved) ? '#999' : 'green'
               }
               onClick={handleSubmit}
-              disabled={
-                isSending ||
-                (!comeGet && deliveryFeeStatus !== 'success')
-              }
+              disabled={isSending || (!comeGet && !feeResolved)}
             >
               {isSending ? 'Enviando' : 'Enviar pedido'}
               {isSending && <Spinner />}
@@ -1135,6 +1237,8 @@ const Checkout: React.FC = () => {
                     onClick={() => {
                       setNeighSelected(n);
                       setBairro(n.name);
+                      setCity(n.city);
+                      setUf(n.uf);
                       setShowNeighModal(false);
                     }}
                   >
@@ -1142,7 +1246,6 @@ const Checkout: React.FC = () => {
                       <NeighCardName>{n.name}</NeighCardName>
                       <NeighCardMeta>{n.city} — {n.uf}</NeighCardMeta>
                     </NeighCardInfo>
-                    <NeighCardFee>{formatBRL(Number(n.feeDelivery))}</NeighCardFee>
                   </NeighCard>
                 ))}
             </NeighList>
